@@ -100,17 +100,18 @@ CREATE TABLE tb_enrollments (
 
 -- =====================================================
 -- GRADES (EDITABLE, PARTIAL, AUTO-COMPUTED)
+-- Supports both numeric grades (85.5) and text markers (INC, DROP, etc.)
 -- =====================================================
 CREATE TABLE tb_grades (
     grade_id INT AUTO_INCREMENT PRIMARY KEY,
     enrollment_id INT UNIQUE,
 
-    prelim DECIMAL(5,2) NULL,
-    midterm DECIMAL(5,2) NULL,
-    finals DECIMAL(5,2) NULL,
+    prelim VARCHAR(10) NULL,
+    midterm VARCHAR(10) NULL,
+    finals VARCHAR(10) NULL,
 
-    semestral DECIMAL(5,2) NULL,
-    status ENUM('PASSED','FAILED') NULL,
+    semestral VARCHAR(10) NULL,
+    status ENUM('PASSED','FAILED','INCOMPLETE','DROPPED','PENDING') NULL,
 
     is_finalized TINYINT DEFAULT 0,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -126,17 +127,17 @@ CREATE TABLE tb_grade_audit_logs (
     grade_id INT,
     changed_by INT,
 
-    old_prelim DECIMAL(5,2),
-    old_midterm DECIMAL(5,2),
-    old_finals DECIMAL(5,2),
-    old_semestral DECIMAL(5,2),
-    old_status ENUM('PASSED','FAILED'),
+    old_prelim VARCHAR(10),
+    old_midterm VARCHAR(10),
+    old_finals VARCHAR(10),
+    old_semestral VARCHAR(10),
+    old_status ENUM('PASSED','FAILED','INCOMPLETE','DROPPED','PENDING'),
 
-    new_prelim DECIMAL(5,2),
-    new_midterm DECIMAL(5,2),
-    new_finals DECIMAL(5,2),
-    new_semestral DECIMAL(5,2),
-    new_status ENUM('PASSED','FAILED'),
+    new_prelim VARCHAR(10),
+    new_midterm VARCHAR(10),
+    new_finals VARCHAR(10),
+    new_semestral VARCHAR(10),
+    new_status ENUM('PASSED','FAILED','INCOMPLETE','DROPPED','PENDING'),
 
     reason TEXT,
     changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
