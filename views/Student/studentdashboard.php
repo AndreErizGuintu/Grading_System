@@ -7,17 +7,45 @@ require_role('student');
 
 $user = current_user();
 
+$student = null;
 $stmt = $mysqli->prepare('SELECT student_id, full_name, program FROM tb_students WHERE user_id = ?');
-$stmt->bind_param('i', $user['user_id']);
-$stmt->execute();
-$student = $stmt->get_result()->fetch_assoc();
-$stmt->close();
+if ($stmt) {
+    $stmt->bind_param('i', $user['user_id']);
+    if ($stmt->execute()) {
+        $student = $stmt->get_result()->fetch_assoc();
+    } else {
+        error_log('Error fetching student: ' . $stmt->error);
+    }
+    $stmt->close();
+} else {
+    error_log('Prepare error: ' . $mysqli->error);
+}
 
-$syList = $mysqli->query('SELECT sy_id, school_year FROM tb_school_years ORDER BY school_year DESC')->fetch_all(MYSQLI_ASSOC);
-$semList = $mysqli->query('SELECT sem_id, semester FROM tb_semesters ORDER BY sem_id ASC')->fetch_all(MYSQLI_ASSOC);
+$syList = [];
+$semList = [];
+
+$syResult = $mysqli->query('SELECT sy_id, school_year FROM tb_school_years ORDER BY school_year DESC');
+if ($syResult === false) {
+    error_log('Error fetching school years: ' . $mysqli->error);
+} else {
+    $syList = $syResult->fetch_all(MYSQLI_ASSOC);
+}
+
+$semResult = $mysqli->query('SELECT sem_id, semester FROM tb_semesters ORDER BY sem_id ASC');
+if ($semResult === false) {
+    error_log('Error fetching semesters: ' . $mysqli->error);
+} else {
+    $semList = $semResult->fetch_all(MYSQLI_ASSOC);
+}
 
 $syId = $_GET['sy_id'] ?? '';
 $semId = $_GET['sem_id'] ?? '';
+
+if (!$student) {
+    http_response_code(404);
+    echo 'Student record not found.';
+    exit;
+}
 
 $studentId = (int)($student['student_id'] ?? 0);
 require __DIR__ . '/../../crud/student_read.php';

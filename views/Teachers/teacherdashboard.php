@@ -38,14 +38,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['batch_save'])) {
             );
 
             foreach ($_POST['grades'] as $enrollmentId => $g) {
-                // Trim and get raw input
-                $prelim = trim($g['prelim']) !== '' ? trim($g['prelim']) : null;
-                $midterm = trim($g['midterm']) !== '' ? trim($g['midterm']) : null;
-                $finals = trim($g['finals']) !== '' ? trim($g['finals']) : null;
+                $errors = [];
+                $prelimError = null;
+                $midtermError = null;
+                $finalsError = null;
+
+                $prelim = normalize_grade_input($g['prelim'] ?? null, $prelimError);
+                $midterm = normalize_grade_input($g['midterm'] ?? null, $midtermError);
+                $finals = normalize_grade_input($g['finals'] ?? null, $finalsError);
+
+                if ($prelimError) { $errors[] = 'Prelim: ' . $prelimError; }
+                if ($midtermError) { $errors[] = 'Midterm: ' . $midtermError; }
+                if ($finalsError) { $errors[] = 'Finals: ' . $finalsError; }
+
+                if (!empty($errors)) {
+                    throw new Exception('Invalid grade input for enrollment ' . $enrollmentId . '. ' . implode(' ', $errors));
+                }
 
                 // Compute semestral and status (handles both numeric and text)
                 [$semestral, $status] = compute_semestral($prelim, $midterm, $finals);
-                
+
                 $stmt->bind_param('isssss', $enrollmentId, $prelim, $midterm, $finals, $semestral, $status);
                 $stmt->execute();
             }
@@ -59,8 +71,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['batch_save'])) {
 }
 
 // FETCH DATA
-$syList = $mysqli->query("SELECT * FROM tb_school_years ORDER BY school_year DESC")->fetch_all(MYSQLI_ASSOC);
-$semList = $mysqli->query("SELECT * FROM tb_semesters ORDER BY sem_id ASC")->fetch_all(MYSQLI_ASSOC);
+$syList = [];
+$semList = [];
+
+$syResult = $mysqli->query("SELECT * FROM tb_school_years ORDER BY school_year DESC");
+if ($syResult === false) {
+    error_log('Error fetching school years: ' . $mysqli->error);
+} else {
+    $syList = $syResult->fetch_all(MYSQLI_ASSOC);
+}
+
+$semResult = $mysqli->query("SELECT * FROM tb_semesters ORDER BY sem_id ASC");
+if ($semResult === false) {
+    error_log('Error fetching semesters: ' . $mysqli->error);
+} else {
+    $semList = $semResult->fetch_all(MYSQLI_ASSOC);
+}
 
 $sql = 'SELECT o.offering_id, c.course_code, c.course_name, sy.school_year, s.semester 
         FROM tb_course_offerings o
@@ -76,9 +102,19 @@ if ($filterSem > 0) { $sql .= ' AND o.sem_id = ?'; $params[] = $filterSem; $type
 
 $sql .= ' ORDER BY sy.school_year DESC, s.semester ASC';
 $offStmt = $mysqli->prepare($sql);
-$offStmt->bind_param($types, ...$params);
-$offStmt->execute();
-$offerings = $offStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+if (!$offStmt) {
+    error_log('Prepare error: ' . $mysqli->error);
+    $offerings = [];
+} else {
+    $offStmt->bind_param($types, ...$params);
+    if (!$offStmt->execute()) {
+        error_log('Execute error: ' . $offStmt->error);
+        $offerings = [];
+    } else {
+        $offerings = $offStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    }
+    $offStmt->close();
+}
 
 $students = [];
 if ($activeOfferingId) {
@@ -89,9 +125,17 @@ if ($activeOfferingId) {
          LEFT JOIN tb_grades g ON g.enrollment_id = e.enrollment_id
          WHERE e.offering_id = ? ORDER BY st.full_name'
     );
-    $enrollStmt->bind_param('i', $activeOfferingId);
-    $enrollStmt->execute();
-    $students = $enrollStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    if (!$enrollStmt) {
+        error_log('Prepare error: ' . $mysqli->error);
+    } else {
+        $enrollStmt->bind_param('i', $activeOfferingId);
+        if (!$enrollStmt->execute()) {
+            error_log('Execute error: ' . $enrollStmt->error);
+        } else {
+            $students = $enrollStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        }
+        $enrollStmt->close();
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -272,35 +316,27 @@ if ($activeOfferingId) {
                     </div>
                     <div class="flex-1">
                         <h4 class="text-sm font-bold text-white mb-3">Grade Entry Guide</h4>
-                        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-[10px]">
+                        <div class="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3 text-[10px]">
                             <div class="bg-black/20 rounded-lg px-3 py-2 border border-white/5">
                                 <span class="font-black text-amber-400">INC</span>
                                 <span class="text-gray-500 block mt-0.5">Incomplete</span>
                             </div>
                             <div class="bg-black/20 rounded-lg px-3 py-2 border border-white/5">
-                                <span class="font-black text-gray-400">DROP</span>
-                                <span class="text-gray-500 block mt-0.5">Dropped</span>
+                                <span class="font-black text-red-400">FA</span>
+                                <span class="text-gray-500 block mt-0.5">Failure due to absence</span>
                             </div>
                             <div class="bg-black/20 rounded-lg px-3 py-2 border border-white/5">
-                                <span class="font-black text-blue-400">WP</span>
-                                <span class="text-gray-500 block mt-0.5">Withdrawn Pass</span>
+                                <span class="font-black text-gray-400">UW</span>
+                                <span class="text-gray-500 block mt-0.5">Unauthorized withdrawal</span>
                             </div>
                             <div class="bg-black/20 rounded-lg px-3 py-2 border border-white/5">
-                                <span class="font-black text-red-400">WF</span>
-                                <span class="text-gray-500 block mt-0.5">Withdrawn Fail</span>
-                            </div>
-                            <div class="bg-black/20 rounded-lg px-3 py-2 border border-white/5">
-                                <span class="font-black text-purple-400">ABS</span>
-                                <span class="text-gray-500 block mt-0.5">Absent</span>
-                            </div>
-                            <div class="bg-black/20 rounded-lg px-3 py-2 border border-white/5">
-                                <span class="font-black text-gray-400">NA</span>
-                                <span class="text-gray-500 block mt-0.5">Not Applicable</span>
+                                <span class="font-black text-slate-300">DRP</span>
+                                <span class="text-gray-500 block mt-0.5">Authorized withdrawal</span>
                             </div>
                         </div>
                         <p class="text-gray-500 text-[10px] mt-3 italic">
                             <i class="fa-solid fa-info-circle mr-1"></i>
-                            Enter numeric grades (0-100) or use text codes above. System auto-formats on blur.
+                            Enter numeric grades (0-100) or use the text codes above. System auto-formats on blur.
                         </p>
                     </div>
                 </div>
@@ -396,7 +432,7 @@ if ($activeOfferingId) {
                                             </td>
                                             <td class="py-4 text-center">
                                                 <span class="text-sm font-black text-white">
-                                                    <?= !is_null($st['semestral']) ? (is_numeric($st['semestral']) ? number_format($st['semestral'], 2) : strtoupper($st['semestral'])) : '—'; ?>
+                                                    <?= !is_null($st['semestral']) ? (is_numeric($st['semestral']) ? number_format($st['semestral'], 0) : strtoupper($st['semestral'])) : '—'; ?>
                                                 </span>
                                             </td>
                                             <td class="px-8 py-4 text-center">
@@ -421,20 +457,34 @@ if ($activeOfferingId) {
 
     <script>
     function formatInput(input) {
-        let val = input.value.toUpperCase().trim();
-        input.style.borderColor = ''; 
+        const allowedCodes = ['INC', 'FA', 'UW', 'DRP'];
+        const val = input.value.toUpperCase().trim();
+        input.style.borderColor = '';
         input.style.background = '';
 
-        if (val === 'INC') {
-            input.value = 'INC';
-            input.style.color = '#f59e0b'; 
-            input.style.borderColor = 'rgba(245, 158, 11, 0.3)';
+        if (allowedCodes.includes(val)) {
+            input.value = val;
+            if (val === 'INC') {
+                input.style.color = '#f59e0b';
+                input.style.borderColor = 'rgba(245, 158, 11, 0.3)';
+            } else if (val === 'FA') {
+                input.style.color = '#f87171';
+                input.style.borderColor = 'rgba(248, 113, 113, 0.3)';
+            } else {
+                input.style.color = '#94a3b8';
+                input.style.borderColor = 'rgba(148, 163, 184, 0.3)';
+            }
         } else if (val !== '' && !isNaN(val)) {
-            input.value = parseFloat(val).toFixed(2);
-            input.style.color = '#818cf8'; 
-        } else {
+            const rounded = Math.round(parseFloat(val));
+            input.value = Number.isFinite(rounded) ? String(rounded) : '';
+            input.style.color = '#818cf8';
+        } else if (val === '') {
             input.value = '';
             input.style.color = '';
+        } else {
+            input.value = '';
+            input.style.color = '#f87171';
+            input.style.borderColor = 'rgba(248, 113, 113, 0.3)';
         }
     }
 

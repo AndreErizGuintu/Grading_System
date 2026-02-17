@@ -41,8 +41,17 @@ if ($semId) {
 $sql .= " ORDER BY c.course_code";
 
 $stmt = $mysqli->prepare($sql);
-$stmt->bind_param($types, ...$params);
-$stmt->execute();
-$result = $stmt->get_result();
-$rows = $result->fetch_all(MYSQLI_ASSOC);
-$stmt->close();
+if (!$stmt) {
+    error_log('Prepare error in student_read.php: ' . $mysqli->error);
+    $rows = [];
+} else {
+    $stmt->bind_param($types, ...$params);
+    if (!$stmt->execute()) {
+        error_log('Execute error in student_read.php: ' . $stmt->error);
+        $rows = [];
+    } else {
+        $result = $stmt->get_result();
+        $rows = $result->fetch_all(MYSQLI_ASSOC);
+    }
+    $stmt->close();
+}

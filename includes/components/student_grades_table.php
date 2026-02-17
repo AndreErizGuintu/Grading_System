@@ -172,7 +172,7 @@
                                     ? ($row['prelim'] >= 75 ? 'grade-pass' : 'grade-fail')
                                     : 'grade-empty';
                                 $displayGrade = $row['prelim'] !== null 
-                                    ? ($isNumeric ? number_format($row['prelim'], 1) : strtoupper($row['prelim']))
+                                    ? ($isNumeric ? number_format($row['prelim'], 0) : strtoupper($row['prelim']))
                                     : '-';
                                 ?>
                                 <span class="grade-box <?php echo $gradeClass; ?>">
@@ -190,7 +190,7 @@
                                     ? ($row['midterm'] >= 75 ? 'grade-pass' : 'grade-fail')
                                     : 'grade-empty';
                                 $displayGrade = $row['midterm'] !== null 
-                                    ? ($isNumeric ? number_format($row['midterm'], 1) : strtoupper($row['midterm']))
+                                    ? ($isNumeric ? number_format($row['midterm'], 0) : strtoupper($row['midterm']))
                                     : '-';
                                 ?>
                                 <span class="grade-box <?php echo $gradeClass; ?>">
@@ -208,7 +208,7 @@
                                     ? ($row['finals'] >= 75 ? 'grade-pass' : 'grade-fail')
                                     : 'grade-empty';
                                 $displayGrade = $row['finals'] !== null 
-                                    ? ($isNumeric ? number_format($row['finals'], 1) : strtoupper($row['finals']))
+                                    ? ($isNumeric ? number_format($row['finals'], 0) : strtoupper($row['finals']))
                                     : '-';
                                 ?>
                                 <span class="grade-box <?php echo $gradeClass; ?>">
@@ -226,7 +226,7 @@
                                     ? ($row['semestral'] >= 75 ? 'semestral-pass' : 'semestral-fail')
                                     : 'semestral-empty';
                                 $displayGrade = $row['semestral'] !== null 
-                                    ? ($isNumeric ? number_format($row['semestral'], 1) : strtoupper($row['semestral']))
+                                    ? ($isNumeric ? number_format($row['semestral'], 0) : strtoupper($row['semestral']))
                                     : '-';
                                 ?>
                                 <span class="semestral-badge <?php echo $gradeClass; ?>">
