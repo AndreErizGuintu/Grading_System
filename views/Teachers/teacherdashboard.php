@@ -289,11 +289,23 @@ if ($activeOfferingId) {
             </div>
             
             <form method="GET" class="flex gap-3">
+                <?php if ($activeOfferingId): ?>
+                    <input type="hidden" name="offering_id" value="<?= $activeOfferingId; ?>">
+                <?php endif; ?>
                 <div class="relative">
                     <select name="filter_sy" onchange="this.form.submit()" class="appearance-none bg-gray-900 border border-white/5 text-[11px] font-bold text-gray-300 pl-4 pr-10 py-2.5 rounded-xl focus:border-indigo-500 outline-none cursor-pointer">
                         <option value="0">All School Years</option>
                         <?php foreach ($syList as $sy): ?>
                             <option value="<?= $sy['sy_id']; ?>" <?= $filterSy == $sy['sy_id'] ? 'selected' : ''; ?>><?= $sy['school_year']; ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <i class="fa-solid fa-chevron-down absolute right-4 top-1/2 -translate-y-1/2 text-[9px] text-gray-500 pointer-events-none"></i>
+                </div>
+                <div class="relative">
+                    <select name="filter_sem" onchange="this.form.submit()" class="appearance-none bg-gray-900 border border-white/5 text-[11px] font-bold text-gray-300 pl-4 pr-10 py-2.5 rounded-xl focus:border-indigo-500 outline-none cursor-pointer">
+                        <option value="0">All Semesters</option>
+                        <?php foreach ($semList as $sem): ?>
+                            <option value="<?= $sem['sem_id']; ?>" <?= $filterSem == $sem['sem_id'] ? 'selected' : ''; ?>><?= htmlspecialchars($sem['semester']); ?></option>
                         <?php endforeach; ?>
                     </select>
                     <i class="fa-solid fa-chevron-down absolute right-4 top-1/2 -translate-y-1/2 text-[9px] text-gray-500 pointer-events-none"></i>
@@ -456,12 +468,38 @@ if ($activeOfferingId) {
     </div>
 
     <script>
+    let _gradeModalSilent = false;
+
+    function showGradeWarningModal(badValue, reason) {
+        document.getElementById('gradeModalBadValue').textContent = badValue || '(empty)';
+        document.getElementById('gradeModalReason').textContent = reason;
+        const modal = document.getElementById('gradeWarningModal');
+        modal.classList.remove('opacity-0', 'pointer-events-none');
+        modal.classList.add('opacity-100');
+        modal.querySelector('.modal-box').classList.remove('scale-95');
+        modal.querySelector('.modal-box').classList.add('scale-100');
+    }
+
+    function closeGradeWarningModal() {
+        const modal = document.getElementById('gradeWarningModal');
+        modal.classList.remove('opacity-100');
+        modal.classList.add('opacity-0', 'pointer-events-none');
+        modal.querySelector('.modal-box').classList.remove('scale-100');
+        modal.querySelector('.modal-box').classList.add('scale-95');
+    }
+
     function formatInput(input) {
         const allowedCodes = ['INC', 'FA', 'UW', 'DRP'];
-        const val = input.value.toUpperCase().trim();
+        const raw = input.value.trim();
+        const val = raw.toUpperCase();
         input.style.borderColor = '';
         input.style.background = '';
+        input.style.color = '';
 
+        if (val === '') {
+            input.value = '';
+            return;
+        }
         if (allowedCodes.includes(val)) {
             input.value = val;
             if (val === 'INC') {
@@ -474,23 +512,97 @@ if ($activeOfferingId) {
                 input.style.color = '#94a3b8';
                 input.style.borderColor = 'rgba(148, 163, 184, 0.3)';
             }
-        } else if (val !== '' && !isNaN(val)) {
-            const rounded = Math.round(parseFloat(val));
-            input.value = Number.isFinite(rounded) ? String(rounded) : '';
-            input.style.color = '#818cf8';
-        } else if (val === '') {
-            input.value = '';
-            input.style.color = '';
-        } else {
-            input.value = '';
-            input.style.color = '#f87171';
-            input.style.borderColor = 'rgba(248, 113, 113, 0.3)';
+            return;
         }
+        if (!isNaN(raw) && raw !== '') {
+            const num = parseFloat(raw);
+            if (num >= 0 && num <= 100) {
+                input.value = String(Math.round(num));
+                input.style.color = '#818cf8';
+                return;
+            }
+            // Out-of-range numeric
+            input.value = '';
+            input.style.borderColor = 'rgba(251, 191, 36, 0.5)';
+            if (!_gradeModalSilent) showGradeWarningModal(raw, 'Numeric grade must be between 0 and 100.');
+            return;
+        }
+        // Invalid text
+        input.value = '';
+        input.style.borderColor = 'rgba(248, 113, 113, 0.3)';
+        if (!_gradeModalSilent) showGradeWarningModal(raw, '"' + raw + '" is not a valid grade. Only numeric values (0–100) or the codes below are accepted.');
     }
 
     document.addEventListener('DOMContentLoaded', () => {
+        _gradeModalSilent = true;
         document.querySelectorAll('.grade-input').forEach(input => formatInput(input));
+        _gradeModalSilent = false;
     });
+
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeGradeWarningModal(); });
     </script>
+
+    <!-- Grade Warning Modal -->
+    <div id="gradeWarningModal" onclick="if(event.target===this)closeGradeWarningModal()" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/70 backdrop-blur-sm transition-all duration-200 opacity-0 pointer-events-none">
+        <div class="modal-box bg-[#0a0f1e] border border-amber-500/30 rounded-2xl shadow-2xl shadow-amber-500/10 w-full max-w-md mx-4 transition-transform duration-200 scale-95">
+            <!-- Header -->
+            <div class="flex items-center gap-3 px-6 pt-6 pb-4 border-b border-white/5">
+                <div class="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                    <i class="fa-solid fa-triangle-exclamation text-amber-400 text-lg"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-black uppercase tracking-widest text-amber-500/70">Input Warning</p>
+                    <h3 class="text-base font-black text-white mt-0.5">Invalid Grade Value</h3>
+                </div>
+                <button onclick="closeGradeWarningModal()" class="ml-auto text-gray-500 hover:text-white transition-colors">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <!-- Body -->
+            <div class="px-6 py-5 space-y-4">
+                <div class="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 flex items-center gap-3">
+                    <i class="fa-solid fa-ban text-red-400 text-sm flex-shrink-0"></i>
+                    <div>
+                        <p class="text-[10px] font-black uppercase tracking-wider text-red-400 mb-0.5">Rejected Value</p>
+                        <p class="text-sm font-black text-white font-mono" id="gradeModalBadValue"></p>
+                    </div>
+                </div>
+                <p class="text-xs text-gray-400 leading-relaxed" id="gradeModalReason"></p>
+                <!-- Guide -->
+                <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                    <p class="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-3">Accepted Values</p>
+                    <div class="grid grid-cols-2 gap-2 text-[10px]">
+                        <div class="flex items-center gap-2">
+                            <span class="w-12 text-center font-black text-indigo-400 bg-indigo-500/10 rounded px-1.5 py-0.5">0–100</span>
+                            <span class="text-gray-400">Numeric grade (auto-rounds)</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-12 text-center font-black text-amber-400 bg-amber-500/10 rounded px-1.5 py-0.5">INC</span>
+                            <span class="text-gray-400">Incomplete</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-12 text-center font-black text-red-400 bg-red-500/10 rounded px-1.5 py-0.5">FA</span>
+                            <span class="text-gray-400">Failed (Absence)</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-12 text-center font-black text-gray-400 bg-gray-500/10 rounded px-1.5 py-0.5">UW</span>
+                            <span class="text-gray-400">Unauthorized Withdrawal</span>
+                        </div>
+                        <div class="flex items-center gap-2 col-span-2">
+                            <span class="w-12 text-center font-black text-gray-300 bg-gray-500/10 rounded px-1.5 py-0.5">DRP</span>
+                            <span class="text-gray-400">Authorized Withdrawal</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Footer -->
+            <div class="px-6 pb-6 flex justify-end">
+                <button onclick="closeGradeWarningModal()" class="bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase px-6 py-2.5 rounded-xl transition-all shadow-lg shadow-amber-500/20">
+                    <i class="fa-solid fa-check mr-2"></i>Understood
+                </button>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>

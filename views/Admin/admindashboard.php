@@ -66,6 +66,114 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 }
 
+// --- LOGIC: OFFERING MANAGEMENT ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    if ($_POST['action'] === 'add_offering') {
+        $oCourseId  = (int)($_POST['course_id'] ?? 0);
+        $oTeacherId = (int)($_POST['teacher_id'] ?? 0);
+        $oSyId      = (int)($_POST['sy_id'] ?? 0);
+        $oSemId     = (int)($_POST['sem_id'] ?? 0);
+        if ($oCourseId && $oTeacherId && $oSyId && $oSemId) {
+            $chk = $mysqli->prepare('SELECT offering_id FROM tb_course_offerings WHERE course_id=? AND teacher_id=? AND sy_id=? AND sem_id=?');
+            $chk->bind_param('iiii', $oCourseId, $oTeacherId, $oSyId, $oSemId);
+            $chk->execute();
+            if ($chk->get_result()->num_rows > 0) {
+                $message = 'Error: That offering already exists for this teacher, course, school year and semester.';
+            } else {
+                $ins = $mysqli->prepare('INSERT INTO tb_course_offerings (course_id, teacher_id, sy_id, sem_id) VALUES (?,?,?,?)');
+                $ins->bind_param('iiii', $oCourseId, $oTeacherId, $oSyId, $oSemId);
+                $message = $ins->execute() ? 'Offering added successfully.' : 'Error adding offering: ' . $ins->error;
+                $ins->close();
+                $activeTab = 'subjects';
+            }
+            $chk->close();
+        } else {
+            $message = 'Error: All fields are required to add an offering.';
+        }
+        $activeTab = 'subjects';
+    }
+
+    if ($_POST['action'] === 'delete_offering') {
+        $delId = (int)($_POST['offering_id'] ?? 0);
+        if ($delId) {
+            $enrolled = $mysqli->prepare('SELECT COUNT(*) FROM tb_enrollments WHERE offering_id = ?');
+            $enrolled->bind_param('i', $delId);
+            $enrolled->execute();
+            $enrollCount = (int)$enrolled->get_result()->fetch_row()[0];
+            $enrolled->close();
+            if ($enrollCount > 0) {
+                $message = 'Error: Cannot delete offering — it has ' . $enrollCount . ' enrolled student(s).';
+            } else {
+                $del = $mysqli->prepare('DELETE FROM tb_course_offerings WHERE offering_id = ?');
+                $del->bind_param('i', $delId);
+                $message = $del->execute() ? 'Offering deleted.' : 'Error deleting offering: ' . $del->error;
+                $del->close();
+            }
+        }
+        $activeTab = 'subjects';
+    }
+
+    // --- LOGIC: MASTER COURSE MANAGEMENT ---
+    if ($_POST['action'] === 'add_course') {
+        $cCode  = trim($_POST['course_code'] ?? '');
+        $cName  = trim($_POST['course_name'] ?? '');
+        $cUnits = (int)($_POST['units'] ?? 0);
+        if ($cCode && $cName && $cUnits > 0) {
+            $chk2 = $mysqli->prepare('SELECT course_id FROM tb_courses WHERE course_code = ?');
+            $chk2->bind_param('s', $cCode);
+            $chk2->execute();
+            if ($chk2->get_result()->num_rows > 0) {
+                $message = 'Error: A course with that code already exists.';
+            } else {
+                $ins2 = $mysqli->prepare('INSERT INTO tb_courses (course_code, course_name, units) VALUES (?,?,?)');
+                $ins2->bind_param('ssi', $cCode, $cName, $cUnits);
+                $message = $ins2->execute() ? 'Course added successfully.' : 'Error adding course: ' . $ins2->error;
+                $ins2->close();
+            }
+            $chk2->close();
+        } else {
+            $message = 'Error: Course code, name, and units are required.';
+        }
+        $activeTab = 'subjects';
+    }
+
+    if ($_POST['action'] === 'update_course') {
+        $editId    = (int)($_POST['course_id'] ?? 0);
+        $editCode  = trim($_POST['course_code'] ?? '');
+        $editName  = trim($_POST['course_name'] ?? '');
+        $editUnits = (int)($_POST['units'] ?? 0);
+        if ($editId && $editCode && $editName && $editUnits > 0) {
+            $upd = $mysqli->prepare('UPDATE tb_courses SET course_code=?, course_name=?, units=? WHERE course_id=?');
+            $upd->bind_param('ssii', $editCode, $editName, $editUnits, $editId);
+            $message = $upd->execute() ? 'Course updated.' : 'Error updating course: ' . $upd->error;
+            $upd->close();
+        } else {
+            $message = 'Error: All course fields are required.';
+        }
+        $activeTab = 'subjects';
+    }
+
+    if ($_POST['action'] === 'delete_course') {
+        $delCid = (int)($_POST['course_id'] ?? 0);
+        if ($delCid) {
+            $inUse = $mysqli->prepare('SELECT COUNT(*) FROM tb_course_offerings WHERE course_id = ?');
+            $inUse->bind_param('i', $delCid);
+            $inUse->execute();
+            $useCount = (int)$inUse->get_result()->fetch_row()[0];
+            $inUse->close();
+            if ($useCount > 0) {
+                $message = 'Error: Cannot delete course — it is used in ' . $useCount . ' offering(s).';
+            } else {
+                $delC = $mysqli->prepare('DELETE FROM tb_courses WHERE course_id = ?');
+                $delC->bind_param('i', $delCid);
+                $message = $delC->execute() ? 'Course deleted.' : 'Error deleting course: ' . $delC->error;
+                $delC->close();
+            }
+        }
+        $activeTab = 'subjects';
+    }
+}
+
 // --- LOGIC: USER MANAGEMENT (UPDATE CREDENTIALS) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_user') {
     $targetUserId = (int)$_POST['user_id'];
@@ -106,6 +214,51 @@ $selectedStudent = null;
 $selectedTeacher = null;
 $studentEnrollments = [];
 $teacherOfferings = [];
+
+// For Subjects Tab
+$allCourses      = [];
+$allSyList       = [];
+$allSemList      = [];
+$allTeachersList = [];
+$allOfferings    = [];
+$editCourseId    = (int)($_GET['edit_course'] ?? 0);
+$editCourse      = null;
+
+$cResult = $mysqli->query("SELECT * FROM tb_courses ORDER BY course_code ASC");
+if ($cResult) $allCourses = $cResult->fetch_all(MYSQLI_ASSOC);
+
+$syListResult = $mysqli->query("SELECT * FROM tb_school_years ORDER BY school_year DESC");
+if ($syListResult) $allSyList = $syListResult->fetch_all(MYSQLI_ASSOC);
+
+$semListResult = $mysqli->query("SELECT * FROM tb_semesters ORDER BY sem_id ASC");
+if ($semListResult) $allSemList = $semListResult->fetch_all(MYSQLI_ASSOC);
+
+$tListResult = $mysqli->query("SELECT teacher_id, full_name FROM tb_teachers ORDER BY full_name ASC");
+if ($tListResult) $allTeachersList = $tListResult->fetch_all(MYSQLI_ASSOC);
+
+$allOfferResult = $mysqli->query(
+    "SELECT o.offering_id, c.course_code, c.course_name, t.full_name AS teacher_name, sy.school_year, s.semester,
+            COUNT(e.enrollment_id) AS roster_count
+     FROM tb_course_offerings o
+     INNER JOIN tb_courses c ON c.course_id = o.course_id
+     INNER JOIN tb_teachers t ON t.teacher_id = o.teacher_id
+     INNER JOIN tb_school_years sy ON sy.sy_id = o.sy_id
+     INNER JOIN tb_semesters s ON s.sem_id = o.sem_id
+     LEFT JOIN tb_enrollments e ON e.offering_id = o.offering_id
+     GROUP BY o.offering_id, c.course_code, c.course_name, t.full_name, sy.school_year, s.semester
+     ORDER BY sy.school_year DESC, s.semester ASC, c.course_code ASC"
+);
+if ($allOfferResult) $allOfferings = $allOfferResult->fetch_all(MYSQLI_ASSOC);
+
+if ($editCourseId > 0) {
+    $ecStmt = $mysqli->prepare('SELECT * FROM tb_courses WHERE course_id = ?');
+    if ($ecStmt) {
+        $ecStmt->bind_param('i', $editCourseId);
+        $ecStmt->execute();
+        $editCourse = $ecStmt->get_result()->fetch_assoc();
+        $ecStmt->close();
+    }
+}
 
 // Fetch Enrollments for Grades Tab
 $enrollResult = $mysqli->query("SELECT e.enrollment_id, st.student_no, st.full_name as student_name, c.course_code, t.full_name as teacher_name, g.prelim, g.midterm, g.finals, g.semestral, g.status 
@@ -390,6 +543,9 @@ if ($auditResult === false) {
                 <a href="?tab=grades" class="flex items-center gap-3 px-4 py-3 rounded-xl transition-all <?= $activeTab == 'grades' ? 'tab-active' : 'text-slate-400 hover:bg-white/5 hover:text-white' ?>">
                     <i class="fa-solid fa-shield-halved"></i> <span class="text-sm font-bold">Grade Overrides</span>
                 </a>
+                <a href="?tab=subjects" class="flex items-center gap-3 px-4 py-3 rounded-xl transition-all <?= $activeTab == 'subjects' ? 'tab-active' : 'text-slate-400 hover:bg-white/5 hover:text-white' ?>">
+                    <i class="fa-solid fa-book"></i> <span class="text-sm font-bold">Subjects</span>
+                </a>
                 <a href="?tab=accounts" class="flex items-center gap-3 px-4 py-3 rounded-xl transition-all <?= $activeTab == 'accounts' ? 'tab-active' : 'text-slate-400 hover:bg-white/5 hover:text-white' ?>">
                     <i class="fa-solid fa-users-gear"></i> <span class="text-sm font-bold">User Accounts</span>
                 </a>
@@ -421,12 +577,30 @@ if ($auditResult === false) {
 
         <main class="p-8 flex-1 overflow-hidden flex flex-col">
             <?php if ($message): ?>
-                <div class="mb-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-2">
-                    <i class="fa-solid fa-circle-check"></i> <?= $message ?>
+                <?php $isError = str_starts_with($message, 'Invalid') || str_starts_with($message, 'Error') || str_contains($message, 'failed') || str_contains($message, 'Failed'); ?>
+                <div class="mb-4 p-3 rounded-lg <?= $isError ? 'bg-red-500/10 border border-red-500/20 text-red-400' : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' ?> text-xs font-bold flex items-center gap-2">
+                    <i class="fa-solid <?= $isError ? 'fa-circle-exclamation' : 'fa-circle-check' ?>"></i> <?= h($message) ?>
                 </div>
             <?php endif; ?>
 
             <?php if ($activeTab === 'grades'): ?>
+                <!-- Grade Entry Guide -->
+                <div class="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+                    <div class="flex items-center gap-2 text-amber-400 text-[10px] font-black uppercase tracking-widest shrink-0">
+                        <i class="fa-solid fa-lightbulb"></i> Grade Codes
+                    </div>
+                    <div class="flex flex-wrap gap-3 text-[10px]">
+                        <span class="font-black text-amber-400">INC</span><span class="text-slate-500">Incomplete</span>
+                        <span class="mx-1 text-white/10">|</span>
+                        <span class="font-black text-red-400">FA</span><span class="text-slate-500">Failed (Absence)</span>
+                        <span class="mx-1 text-white/10">|</span>
+                        <span class="font-black text-slate-400">UW</span><span class="text-slate-500">Unauthorized Withdrawal</span>
+                        <span class="mx-1 text-white/10">|</span>
+                        <span class="font-black text-slate-300">DRP</span><span class="text-slate-500">Authorized Withdrawal</span>
+                        <span class="mx-1 text-white/10">|</span>
+                        <span class="text-slate-500 italic">Numeric 0–100 auto-rounds to integer</span>
+                    </div>
+                </div>
                 <div class="glass rounded-2xl overflow-hidden flex flex-col">
                     <div class="p-4 border-b border-white/5 bg-white/[0.02] flex flex-wrap items-center gap-3">
                         <div class="text-[10px] font-black uppercase tracking-widest text-slate-500">Filters</div>
@@ -465,9 +639,9 @@ if ($auditResult === false) {
                                         <input type="hidden" name="enrollment_id" value="<?= $row['enrollment_id'] ?>">
                                         <td class="px-6 py-3 text-center">
                                             <div class="flex gap-2 justify-center">
-                                                <input name="prelim" type="text" placeholder="P" class="w-14 bg-black/40 border border-white/10 rounded-md px-2 py-1 text-center text-xs text-white focus:border-red-500 outline-none" value="<?= $row['prelim'] ?>">
-                                                <input name="midterm" type="text" placeholder="M" class="w-14 bg-black/40 border border-white/10 rounded-md px-2 py-1 text-center text-xs text-white focus:border-red-500 outline-none" value="<?= $row['midterm'] ?>">
-                                                <input name="finals" type="text" placeholder="F" class="w-14 bg-black/40 border border-white/10 rounded-md px-2 py-1 text-center text-xs text-white focus:border-red-500 outline-none" value="<?= $row['finals'] ?>">
+                                                <input name="prelim" type="text" placeholder="P" class="admin-grade-input w-14 bg-black/40 border border-white/10 rounded-md px-2 py-1 text-center text-xs text-white focus:border-red-500 outline-none" value="<?= h($row['prelim'] ?? '') ?>" onblur="adminFormatInput(this)">
+                                                <input name="midterm" type="text" placeholder="M" class="admin-grade-input w-14 bg-black/40 border border-white/10 rounded-md px-2 py-1 text-center text-xs text-white focus:border-red-500 outline-none" value="<?= h($row['midterm'] ?? '') ?>" onblur="adminFormatInput(this)">
+                                                <input name="finals" type="text" placeholder="F" class="admin-grade-input w-14 bg-black/40 border border-white/10 rounded-md px-2 py-1 text-center text-xs text-white focus:border-red-500 outline-none" value="<?= h($row['finals'] ?? '') ?>" onblur="adminFormatInput(this)">
                                             </div>
                                         </td>
                                         <td class="px-6 py-3">
@@ -484,6 +658,201 @@ if ($auditResult === false) {
                             </tbody>
                         </table>
                     </div>
+                </div>
+
+            <?php elseif ($activeTab === 'subjects'): ?>
+                <div class="flex-1 overflow-y-auto pr-2 space-y-8">
+
+                    <!-- MASTER COURSES SECTION -->
+                    <div>
+                        <div class="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 class="text-sm font-black uppercase tracking-widest text-slate-400">Master Courses</h3>
+                                <p class="text-[10px] text-slate-500 mt-0.5"><?= count($allCourses) ?> courses in system</p>
+                            </div>
+                        </div>
+
+                        <!-- Add / Edit Course Form -->
+                        <div class="glass rounded-xl p-5 border border-white/10 mb-4">
+                            <p class="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">
+                                <?= $editCourse ? 'Edit Course #' . $editCourse['course_id'] : 'Add New Course' ?>
+                            </p>
+                            <form method="POST" class="flex flex-wrap gap-3 items-end">
+                                <input type="hidden" name="action" value="<?= $editCourse ? 'update_course' : 'add_course' ?>">
+                                <?php if ($editCourse): ?>
+                                    <input type="hidden" name="course_id" value="<?= $editCourse['course_id'] ?>">
+                                <?php endif; ?>
+                                <div>
+                                    <label class="text-[9px] font-bold text-slate-500 uppercase block mb-1">Course Code</label>
+                                    <input name="course_code" required maxlength="20"
+                                           value="<?= h($editCourse['course_code'] ?? '') ?>"
+                                           class="admin-select border rounded-lg px-3 py-2 text-[11px] text-slate-200 font-bold w-36 outline-none focus:border-red-500"
+                                           placeholder="e.g. CS101">
+                                </div>
+                                <div class="flex-1 min-w-48">
+                                    <label class="text-[9px] font-bold text-slate-500 uppercase block mb-1">Course Name</label>
+                                    <input name="course_name" required maxlength="100"
+                                           value="<?= h($editCourse['course_name'] ?? '') ?>"
+                                           class="admin-select border rounded-lg px-3 py-2 text-[11px] text-slate-200 font-bold w-full outline-none focus:border-red-500"
+                                           placeholder="e.g. Data Structures">
+                                </div>
+                                <div>
+                                    <label class="text-[9px] font-bold text-slate-500 uppercase block mb-1">Units</label>
+                                    <input name="units" type="number" min="1" max="10" required
+                                           value="<?= h((string)($editCourse['units'] ?? '3')) ?>"
+                                           class="admin-select border rounded-lg px-3 py-2 text-[11px] text-slate-200 font-bold w-20 outline-none focus:border-red-500">
+                                </div>
+                                <button class="bg-red-600 hover:bg-red-500 text-white px-5 py-2 rounded-lg text-[11px] font-black uppercase transition-all">
+                                    <i class="fa-solid <?= $editCourse ? 'fa-floppy-disk' : 'fa-plus' ?>"></i>
+                                    <?= $editCourse ? 'Save Changes' : 'Add Course' ?>
+                                </button>
+                                <?php if ($editCourse): ?>
+                                    <a href="?tab=subjects" class="text-[11px] font-bold text-slate-400 hover:text-white px-4 py-2 rounded-lg border border-white/10 hover:bg-white/5 transition-all">Cancel</a>
+                                <?php endif; ?>
+                            </form>
+                        </div>
+
+                        <!-- Courses Table -->
+                        <div class="glass rounded-xl overflow-hidden border border-white/5">
+                            <table class="w-full text-left">
+                                <thead>
+                                    <tr class="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-black/20">
+                                        <th class="px-6 py-3">Code</th>
+                                        <th class="px-6 py-3">Name</th>
+                                        <th class="px-4 py-3 text-center">Units</th>
+                                        <th class="px-6 py-3 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-white/5">
+                                    <?php foreach ($allCourses as $c): ?>
+                                    <tr class="hover:bg-white/[0.02] transition-colors <?= ($editCourseId === (int)$c['course_id']) ? 'bg-red-500/5 border-l-2 border-l-red-500' : '' ?>">
+                                        <td class="px-6 py-3 font-black text-white text-xs"><?= h($c['course_code']) ?></td>
+                                        <td class="px-6 py-3 text-xs text-slate-300"><?= h($c['course_name']) ?></td>
+                                        <td class="px-4 py-3 text-center text-xs text-slate-400"><?= h((string)$c['units']) ?></td>
+                                        <td class="px-6 py-3 text-right">
+                                            <div class="flex gap-2 justify-end">
+                                                <a href="?tab=subjects&edit_course=<?= $c['course_id'] ?>" class="text-[10px] font-bold text-blue-400 hover:text-blue-300 px-3 py-1 rounded border border-blue-500/20 hover:bg-blue-500/10 transition-all">
+                                                    <i class="fa-solid fa-pen"></i> Edit
+                                                </a>
+                                                <form method="POST" onsubmit="return confirm('Delete course \'<?= h(addslashes($c['course_code'])) ?>\'? This cannot be undone.')">
+                                                    <input type="hidden" name="action" value="delete_course">
+                                                    <input type="hidden" name="course_id" value="<?= $c['course_id'] ?>">
+                                                    <button class="text-[10px] font-bold text-red-400 hover:text-white px-3 py-1 rounded border border-red-500/20 hover:bg-red-500 transition-all">
+                                                        <i class="fa-solid fa-trash"></i> Delete
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                    <?php if (empty($allCourses)): ?>
+                                        <tr><td colspan="4" class="px-6 py-8 text-center text-xs text-slate-500 italic">No courses found. Add one above.</td></tr>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- COURSE OFFERINGS SECTION -->
+                    <div>
+                        <div class="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 class="text-sm font-black uppercase tracking-widest text-slate-400">Course Offerings</h3>
+                                <p class="text-[10px] text-slate-500 mt-0.5"><?= count($allOfferings) ?> active offerings</p>
+                            </div>
+                        </div>
+
+                        <!-- Add Offering Form -->
+                        <div class="glass rounded-xl p-5 border border-white/10 mb-4">
+                            <p class="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Assign New Offering</p>
+                            <form method="POST" class="flex flex-wrap gap-3 items-end">
+                                <input type="hidden" name="action" value="add_offering">
+                                <div>
+                                    <label class="text-[9px] font-bold text-slate-500 uppercase block mb-1">Course</label>
+                                    <select name="course_id" required class="admin-select border rounded-lg px-3 py-2 text-[11px] text-slate-200 font-bold w-44 outline-none">
+                                        <option value="">Select Course</option>
+                                        <?php foreach ($allCourses as $c): ?>
+                                            <option value="<?= $c['course_id'] ?>"><?= h($c['course_code']) ?> — <?= h($c['course_name']) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="text-[9px] font-bold text-slate-500 uppercase block mb-1">Teacher</label>
+                                    <select name="teacher_id" required class="admin-select border rounded-lg px-3 py-2 text-[11px] text-slate-200 font-bold w-44 outline-none">
+                                        <option value="">Select Teacher</option>
+                                        <?php foreach ($allTeachersList as $t): ?>
+                                            <option value="<?= $t['teacher_id'] ?>"><?= h($t['full_name']) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="text-[9px] font-bold text-slate-500 uppercase block mb-1">School Year</label>
+                                    <select name="sy_id" required class="admin-select border rounded-lg px-3 py-2 text-[11px] text-slate-200 font-bold w-36 outline-none">
+                                        <option value="">Select SY</option>
+                                        <?php foreach ($allSyList as $sy): ?>
+                                            <option value="<?= $sy['sy_id'] ?>"><?= h($sy['school_year']) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="text-[9px] font-bold text-slate-500 uppercase block mb-1">Semester</label>
+                                    <select name="sem_id" required class="admin-select border rounded-lg px-3 py-2 text-[11px] text-slate-200 font-bold w-28 outline-none">
+                                        <option value="">Select Sem</option>
+                                        <?php foreach ($allSemList as $sem): ?>
+                                            <option value="<?= $sem['sem_id'] ?>"><?= h($sem['semester']) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <button class="bg-red-600 hover:bg-red-500 text-white px-5 py-2 rounded-lg text-[11px] font-black uppercase transition-all">
+                                    <i class="fa-solid fa-plus"></i> Add Offering
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Offerings Table -->
+                        <div class="glass rounded-xl overflow-hidden border border-white/5">
+                            <table class="w-full text-left">
+                                <thead>
+                                    <tr class="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-black/20">
+                                        <th class="px-6 py-3">Course</th>
+                                        <th class="px-6 py-3">Teacher</th>
+                                        <th class="px-4 py-3">School Year</th>
+                                        <th class="px-4 py-3">Semester</th>
+                                        <th class="px-4 py-3 text-center">Enrolled</th>
+                                        <th class="px-6 py-3 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-white/5">
+                                    <?php foreach ($allOfferings as $off): ?>
+                                    <tr class="hover:bg-white/[0.02] transition-colors">
+                                        <td class="px-6 py-3">
+                                            <div class="font-bold text-white text-xs"><?= h($off['course_code']) ?></div>
+                                            <div class="text-[10px] text-slate-500"><?= h($off['course_name']) ?></div>
+                                        </td>
+                                        <td class="px-6 py-3 text-xs text-slate-300"><?= h($off['teacher_name']) ?></td>
+                                        <td class="px-4 py-3 text-xs text-slate-400"><?= h($off['school_year']) ?></td>
+                                        <td class="px-4 py-3 text-xs text-slate-400"><?= h($off['semester']) ?></td>
+                                        <td class="px-4 py-3 text-center text-xs text-white"><?= h((string)$off['roster_count']) ?></td>
+                                        <td class="px-6 py-3 text-right">
+                                            <form method="POST" onsubmit="return confirm('Delete this offering? Students enrolled must be removed first.')">
+                                                <input type="hidden" name="action" value="delete_offering">
+                                                <input type="hidden" name="offering_id" value="<?= $off['offering_id'] ?>">
+                                                <button class="text-[10px] font-bold text-red-400 hover:text-white px-3 py-1 rounded border border-red-500/20 hover:bg-red-500 transition-all <?= $off['roster_count'] > 0 ? 'opacity-50 cursor-not-allowed' : '' ?>"
+                                                    <?= $off['roster_count'] > 0 ? 'disabled title="Cannot delete — has enrolled students"' : '' ?>>
+                                                    <i class="fa-solid fa-trash"></i> Delete
+                                                </button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                    <?php if (empty($allOfferings)): ?>
+                                        <tr><td colspan="6" class="px-6 py-8 text-center text-xs text-slate-500 italic">No offerings found. Add one above.</td></tr>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                 </div>
 
             <?php elseif ($activeTab === 'accounts'): ?>
@@ -734,21 +1103,97 @@ if ($auditResult === false) {
     </div>
 
     <script>
+        let _gradeModalSilent = false; // suppress modal during page-load normalization
+
+        function showGradeWarningModal(badValue, reason) {
+            document.getElementById('gradeModalBadValue').textContent = badValue || '(empty)';
+            document.getElementById('gradeModalReason').textContent = reason;
+            const modal = document.getElementById('gradeWarningModal');
+            modal.classList.remove('opacity-0', 'pointer-events-none');
+            modal.classList.add('opacity-100');
+            modal.querySelector('.modal-box').classList.remove('scale-95');
+            modal.querySelector('.modal-box').classList.add('scale-100');
+        }
+
+        function closeGradeWarningModal() {
+            const modal = document.getElementById('gradeWarningModal');
+            modal.classList.remove('opacity-100');
+            modal.classList.add('opacity-0', 'pointer-events-none');
+            modal.querySelector('.modal-box').classList.remove('scale-100');
+            modal.querySelector('.modal-box').classList.add('scale-95');
+        }
+
+        // Admin grade input formatter
+        function adminFormatInput(input) {
+            const allowedCodes = ['INC', 'FA', 'UW', 'DRP'];
+            const raw = input.value.trim();
+            const val = raw.toUpperCase();
+            input.style.borderColor = '';
+            input.style.color = '';
+            input.title = '';
+
+            if (val === '') {
+                input.value = '';
+                return;
+            }
+            if (allowedCodes.includes(val)) {
+                input.value = val;
+                if (val === 'INC') {
+                    input.style.color = '#f59e0b';
+                    input.style.borderColor = 'rgba(245, 158, 11, 0.5)';
+                } else if (val === 'FA') {
+                    input.style.color = '#f87171';
+                    input.style.borderColor = 'rgba(248, 113, 113, 0.5)';
+                } else {
+                    input.style.color = '#94a3b8';
+                    input.style.borderColor = 'rgba(148, 163, 184, 0.4)';
+                }
+                return;
+            }
+            if (!isNaN(raw) && raw !== '') {
+                const num = parseFloat(raw);
+                if (num >= 0 && num <= 100) {
+                    input.value = String(Math.round(num));
+                    input.style.color = '#818cf8';
+                    return;
+                }
+                // Out-of-range numeric
+                input.value = '';
+                input.style.borderColor = 'rgba(251, 191, 36, 0.6)';
+                if (!_gradeModalSilent) showGradeWarningModal(raw, 'Numeric grade must be between 0 and 100.');
+                return;
+            }
+            // Invalid text
+            input.value = '';
+            input.style.borderColor = 'rgba(251, 191, 36, 0.6)';
+            if (!_gradeModalSilent) showGradeWarningModal(raw, '\"' + raw + '\" is not a valid grade. Only numeric values (0–100) or the codes below are accepted.');
+        }
+
+        // Silently normalize all grade inputs on page load — no modal
+        document.addEventListener('DOMContentLoaded', () => {
+            _gradeModalSilent = true;
+            document.querySelectorAll('.admin-grade-input').forEach(input => adminFormatInput(input));
+            _gradeModalSilent = false;
+        });
+
+        // Close modal on Escape
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeGradeWarningModal(); });
+
         function applyFilters() {
             const input = document.getElementById("searchInput");
-            const filter = input.value.toUpperCase();
+            const filter = input ? input.value.toUpperCase() : '';
+            const courseSelect = document.getElementById("courseFilter");
             const studentSelect = document.getElementById("studentFilter");
-            const teacherSelect = document.getElementById("teacherFilter");
-            const studentValue = studentSelect ? studentSelect.value : '';
-            const teacherValue = teacherSelect ? teacherSelect.value : '';
+            const courseValue = courseSelect ? courseSelect.value : '';
+            const studentValue = studentSelect ? studentSelect.value.toLowerCase() : '';
             const rows = document.getElementsByClassName("searchable-row");
 
             for (let i = 0; i < rows.length; i++) {
                 const text = rows[i].textContent || rows[i].innerText;
+                const courseMatch = !courseValue || (rows[i].dataset.course || '') === courseValue;
                 const studentMatch = !studentValue || (rows[i].dataset.student || '').includes(studentValue);
-                const teacherMatch = !teacherValue || (rows[i].dataset.teacher || '').includes(teacherValue);
 
-                if (text.toUpperCase().indexOf(filter) > -1 && studentMatch && teacherMatch) {
+                if (text.toUpperCase().indexOf(filter) > -1 && courseMatch && studentMatch) {
                     rows[i].style.display = "";
                 } else {
                     rows[i].style.display = "none";
@@ -756,10 +1201,92 @@ if ($auditResult === false) {
             }
         }
 
+        const courseFilter = document.getElementById("courseFilter");
         const studentFilter = document.getElementById("studentFilter");
-        const teacherFilter = document.getElementById("teacherFilter");
+        if (courseFilter) courseFilter.addEventListener('change', applyFilters);
         if (studentFilter) studentFilter.addEventListener('change', applyFilters);
-        if (teacherFilter) teacherFilter.addEventListener('change', applyFilters);
+
+        function updateStudentOptions(courseCode) {
+            const studentsByCourse = <?= json_encode($studentsByCourse) ?>;
+            const select = document.getElementById('studentFilter');
+            if (!select) return;
+            const prev = select.value;
+            select.innerHTML = '<option value="">All Students</option>';
+            const list = courseCode ? (studentsByCourse[courseCode] || []) : <?= json_encode(array_values($allStudents)) ?>;
+            list.forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name.toLowerCase();
+                opt.textContent = name;
+                if (opt.value === prev) opt.selected = true;
+                select.appendChild(opt);
+            });
+            applyFilters();
+        }
+        const courseFilterEl = document.getElementById('courseFilter');
+        if (courseFilterEl) courseFilterEl.addEventListener('change', function() { updateStudentOptions(this.value); });
     </script>
+
+    <!-- Grade Warning Modal -->
+    <div id="gradeWarningModal" onclick="if(event.target===this)closeGradeWarningModal()" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/70 backdrop-blur-sm transition-all duration-200 opacity-0 pointer-events-none">
+        <div class="modal-box bg-[#0f1623] border border-amber-500/30 rounded-2xl shadow-2xl shadow-amber-500/10 w-full max-w-md mx-4 transition-transform duration-200 scale-95">
+            <!-- Header -->
+            <div class="flex items-center gap-3 px-6 pt-6 pb-4 border-b border-white/5">
+                <div class="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                    <i class="fa-solid fa-triangle-exclamation text-amber-400 text-lg"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-black uppercase tracking-widest text-amber-500/70">Input Warning</p>
+                    <h3 class="text-base font-black text-white mt-0.5">Invalid Grade Value</h3>
+                </div>
+                <button onclick="closeGradeWarningModal()" class="ml-auto text-slate-500 hover:text-white transition-colors">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <!-- Body -->
+            <div class="px-6 py-5 space-y-4">
+                <div class="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 flex items-center gap-3">
+                    <i class="fa-solid fa-ban text-red-400 text-sm flex-shrink-0"></i>
+                    <div>
+                        <p class="text-[10px] font-black uppercase tracking-wider text-red-400 mb-0.5">Rejected Value</p>
+                        <p class="text-sm font-black text-white font-mono" id="gradeModalBadValue"></p>
+                    </div>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed" id="gradeModalReason"></p>
+                <!-- Guide -->
+                <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                    <p class="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-3">Accepted Values</p>
+                    <div class="grid grid-cols-2 gap-2 text-[10px]">
+                        <div class="flex items-center gap-2">
+                            <span class="w-12 text-center font-black text-indigo-400 bg-indigo-500/10 rounded px-1.5 py-0.5">0–100</span>
+                            <span class="text-slate-400">Numeric grade (auto-rounds)</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-12 text-center font-black text-amber-400 bg-amber-500/10 rounded px-1.5 py-0.5">INC</span>
+                            <span class="text-slate-400">Incomplete</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-12 text-center font-black text-red-400 bg-red-500/10 rounded px-1.5 py-0.5">FA</span>
+                            <span class="text-slate-400">Failed (Absence)</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-12 text-center font-black text-slate-400 bg-slate-500/10 rounded px-1.5 py-0.5">UW</span>
+                            <span class="text-slate-400">Unauthorized Withdrawal</span>
+                        </div>
+                        <div class="flex items-center gap-2 col-span-2">
+                            <span class="w-12 text-center font-black text-slate-300 bg-slate-500/10 rounded px-1.5 py-0.5">DRP</span>
+                            <span class="text-slate-400">Authorized Withdrawal</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Footer -->
+            <div class="px-6 pb-6 flex justify-end">
+                <button onclick="closeGradeWarningModal()" class="bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase px-6 py-2.5 rounded-xl transition-all shadow-lg shadow-amber-500/20">
+                    <i class="fa-solid fa-check mr-2"></i>Understood
+                </button>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
